@@ -105,6 +105,28 @@ export function StatsPage() {
 
       <StatsGrid cards={stats.statCards} />
 
+      <section className="rounded-lg border border-border-subtle bg-bg-surface p-4">
+        <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="font-heading text-lg font-bold text-text-primary">Azure Branch Work</h2>
+            <p className="text-sm text-text-muted">Counts from your Azure PR source branch naming.</p>
+          </div>
+          <span className="text-sm font-bold text-text-muted">{stats.azurePrCount} Azure PRs</span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {stats.branchWorkStats.map((item) => (
+            <div key={item.key} className="rounded-lg border border-border-subtle bg-bg-elevated p-4">
+              <div className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
+                <p className="text-xs font-bold uppercase text-text-muted">{item.label}</p>
+              </div>
+              <p className="mt-3 font-heading text-3xl font-bold text-text-primary">{item.value}</p>
+              <p className="mt-1 text-xs text-text-muted">{item.detail}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <div className="grid gap-5 lg:grid-cols-2">
         <WeekBarChart data={stats.weekDays} />
         <DonutChart data={stats.typeStats} />
