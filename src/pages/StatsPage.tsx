@@ -1,16 +1,24 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
 import { motion } from "framer-motion";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Clipboard, Download } from "lucide-react";
+import { Clipboard, Download, FileSpreadsheet } from "lucide-react";
 import { DonutChart } from "@/components/stats/DonutChart";
 import { StatsGrid } from "@/components/stats/StatsGrid";
 import { StreakCard } from "@/components/stats/StreakCard";
 import { WeekBarChart } from "@/components/stats/WeekBarChart";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useEntries } from "@/hooks/useEntries";
 import { useStats } from "@/hooks/useStats";
-import { downloadFile, todayKey, typeLabel } from "@/lib/utils";
+import {
+  downloadFile,
+  entriesToCsv,
+  entriesToExcel,
+  filterEntriesByDateRange,
+  todayKey,
+  typeLabel
+} from "@/lib/utils";
 import { useAppStore } from "@/store/useAppStore";
 import type { Entry } from "@/types";
 
@@ -42,21 +50,47 @@ export function StatsPage() {
   const addToast = useAppStore((state) => state.addToast);
   const entriesApi = useEntries();
   const stats = useStats(entries);
+  const [exportMode, setExportMode] = useState<"all" | "range">("all");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState(todayKey());
 
   useEffect(() => {
     if (!user?.uid) return;
     void entriesApi.loadAll().catch(() => undefined);
   }, [user?.uid]);
 
+  const exportEntries = useMemo(() => {
+    if (exportMode === "all") return entries;
+    return filterEntriesByDateRange(entries, fromDate || undefined, toDate || undefined);
+  }, [entries, exportMode, fromDate, toDate]);
+
+  const rangeLabel =
+    exportMode === "all"
+      ? "All entries till now"
+      : `${fromDate || "Start"} to ${toDate || "Today"}`;
+
+  const fileSuffix =
+    exportMode === "all"
+      ? "all"
+      : `${fromDate || "start"}-to-${toDate || "today"}`;
+
   const exportCsv = () => {
-    downloadFile("worklog.csv", stats.csv, "text/csv;charset=utf-8");
+    downloadFile(`worklog-${fileSuffix}.csv`, entriesToCsv(exportEntries), "text/csv;charset=utf-8");
   };
 
   const exportJson = () => {
     downloadFile(
-      "worklog.json",
-      JSON.stringify(entries.map(serializableEntry), null, 2),
+      `worklog-${fileSuffix}.json`,
+      JSON.stringify(exportEntries.map(serializableEntry), null, 2),
       "application/json;charset=utf-8"
+    );
+  };
+
+  const exportExcel = () => {
+    downloadFile(
+      `worklog-${fileSuffix}.xls`,
+      entriesToExcel(exportEntries, rangeLabel),
+      "application/vnd.ms-excel;charset=utf-8"
     );
   };
 
@@ -112,7 +146,58 @@ export function StatsPage() {
 
       <section className="rounded-lg border border-border-subtle bg-bg-surface p-4">
         <h2 className="font-heading text-lg font-bold text-text-primary">Export</h2>
-        <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        <div className="mt-4 grid gap-3 lg:grid-cols-[auto_1fr_1fr]">
+          <div className="flex rounded-lg border border-border-subtle bg-bg-elevated p-1">
+            <button
+              type="button"
+              onClick={() => setExportMode("all")}
+              className={`rounded-md px-3 py-2 text-sm font-bold transition ${
+                exportMode === "all" ? "bg-accent-blue text-white" : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              All Data
+            </button>
+            <button
+              type="button"
+              onClick={() => setExportMode("range")}
+              className={`rounded-md px-3 py-2 text-sm font-bold transition ${
+                exportMode === "range" ? "bg-accent-blue text-white" : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              Date Range
+            </button>
+          </div>
+          <Input
+            type="date"
+            value={fromDate}
+            onChange={(event) => {
+              setFromDate(event.target.value);
+              setExportMode("range");
+            }}
+            disabled={exportMode === "all"}
+            aria-label="Export from date"
+          />
+          <Input
+            type="date"
+            value={toDate}
+            onChange={(event) => {
+              setToDate(event.target.value);
+              setExportMode("range");
+            }}
+            disabled={exportMode === "all"}
+            aria-label="Export to date"
+          />
+        </div>
+
+        <div className="mt-3 rounded-lg bg-bg-elevated p-3 text-sm font-semibold text-text-muted">
+          {exportEntries.length} entries selected — {rangeLabel}
+        </div>
+
+        <div className="mt-4 grid gap-2 sm:grid-cols-4">
+          <Button type="button" onClick={exportExcel} disabled={isLoading || exportEntries.length === 0}>
+            <FileSpreadsheet className="h-4 w-4" />
+            Export Excel
+          </Button>
           <Button type="button" variant="outline" onClick={exportCsv} disabled={isLoading}>
             <Download className="h-4 w-4" />
             Export CSV
