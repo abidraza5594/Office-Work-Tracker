@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg-primary: 246 247 251;
+  --color-bg-surface: 255 255 255;
+  --color-bg-elevated: 240 243 249;
+  --color-border-subtle: 214 220 232;
+  --color-accent-blue: 72 109 255;
+  --color-accent-purple: 124 91 255;
+  --color-success: 16 154 103;
+  --color-warning: 194 127 0;
+  --color-danger: 216 72 72;
+  --color-text-primary: 23 28 40;
+  --color-text-muted: 84 94 116;
+  --color-text-hint: 128 139 162;
+  color-scheme: light;
+}
+
+.dark {
+  --color-bg-primary: 13 15 20;
+  --color-bg-surface: 30 34 48;
+  --color-bg-elevated: 36 40 56;
+  --color-border-subtle: 46 51 71;
+  --color-accent-blue: 108 143 255;
+  --color-accent-purple: 167 139 250;
+  --color-success: 52 211 153;
+  --color-warning: 251 191 36;
+  --color-danger: 248 113 113;
+  --color-text-primary: 232 234 240;
+  --color-text-muted: 155 163 184;
+  --color-text-hint: 90 98 120;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+html {
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  overflow-x: hidden;
+  background: rgb(var(--color-bg-primary));
+  color: rgb(var(--color-text-primary));
+  font-family: "DM Sans", sans-serif;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+input,
+textarea,
+select {
+  font-size: 16px;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: rgba(108, 143, 255, 0.35);
+}
+
+@layer utilities {
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .safe-bottom {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+  }
+
+  .touch-scroll {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(var(--color-bg-elevated), 0.8) 0%,
+      rgba(var(--color-text-hint), 0.12) 45%,
+      rgba(var(--color-bg-elevated), 0.8) 100%
+    );
+    background-size: 420px 100%;
+    animation: shimmer 1.5s infinite linear;
+  }
+}
