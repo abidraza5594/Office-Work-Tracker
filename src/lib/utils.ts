@@ -92,6 +92,10 @@ export function entryMatchesSearch(entry: Entry, query: string) {
 
 export function downloadFile(filename: string, content: string, type: string) {
   const blob = new Blob([content], { type });
+  downloadBlob(filename, blob);
+}
+
+export function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -278,6 +282,343 @@ export function entriesToExcel(entries: Entry[], rangeLabel: string) {
   </table>
 </body>
 </html>`;
+}
+
+function crc32(bytes: Uint8Array) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let index = 0; index < 8; index += 1) {
+      crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function writeUint16(target: number[], value: number) {
+  target.push(value & 0xff, (value >>> 8) & 0xff);
+}
+
+function writeUint32(target: number[], value: number) {
+  target.push(value & 0xff, (value >>> 8) & 0xff, (value >>> 16) & 0xff, (value >>> 24) & 0xff);
+}
+
+function dosTimestamp(date = new Date()) {
+  const time =
+    (date.getHours() << 11) |
+    (date.getMinutes() << 5) |
+    Math.floor(date.getSeconds() / 2);
+  const day =
+    ((date.getFullYear() - 1980) << 9) |
+    ((date.getMonth() + 1) << 5) |
+    date.getDate();
+  return { time, day };
+}
+
+function createZip(files: Array<{ name: string; content: string }>) {
+  const encoder = new TextEncoder();
+  const localParts: Uint8Array[] = [];
+  const centralParts: Uint8Array[] = [];
+  const { time, day } = dosTimestamp();
+  let offset = 0;
+
+  for (const file of files) {
+    const nameBytes = encoder.encode(file.name);
+    const contentBytes = encoder.encode(file.content);
+    const checksum = crc32(contentBytes);
+
+    const localHeader: number[] = [];
+    writeUint32(localHeader, 0x04034b50);
+    writeUint16(localHeader, 20);
+    writeUint16(localHeader, 0x0800);
+    writeUint16(localHeader, 0);
+    writeUint16(localHeader, time);
+    writeUint16(localHeader, day);
+    writeUint32(localHeader, checksum);
+    writeUint32(localHeader, contentBytes.length);
+    writeUint32(localHeader, contentBytes.length);
+    writeUint16(localHeader, nameBytes.length);
+    writeUint16(localHeader, 0);
+
+    localParts.push(new Uint8Array(localHeader), nameBytes, contentBytes);
+
+    const centralHeader: number[] = [];
+    writeUint32(centralHeader, 0x02014b50);
+    writeUint16(centralHeader, 20);
+    writeUint16(centralHeader, 20);
+    writeUint16(centralHeader, 0x0800);
+    writeUint16(centralHeader, 0);
+    writeUint16(centralHeader, time);
+    writeUint16(centralHeader, day);
+    writeUint32(centralHeader, checksum);
+    writeUint32(centralHeader, contentBytes.length);
+    writeUint32(centralHeader, contentBytes.length);
+    writeUint16(centralHeader, nameBytes.length);
+    writeUint16(centralHeader, 0);
+    writeUint16(centralHeader, 0);
+    writeUint16(centralHeader, 0);
+    writeUint16(centralHeader, 0);
+    writeUint32(centralHeader, 0);
+    writeUint32(centralHeader, offset);
+
+    centralParts.push(new Uint8Array(centralHeader), nameBytes);
+    offset += localHeader.length + nameBytes.length + contentBytes.length;
+  }
+
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const end: number[] = [];
+  writeUint32(end, 0x06054b50);
+  writeUint16(end, 0);
+  writeUint16(end, 0);
+  writeUint16(end, files.length);
+  writeUint16(end, files.length);
+  writeUint32(end, centralSize);
+  writeUint32(end, offset);
+  writeUint16(end, 0);
+
+  const allParts = [...localParts, ...centralParts, new Uint8Array(end)];
+  const totalLength = allParts.reduce((sum, part) => sum + part.length, 0);
+  const zip = new Uint8Array(totalLength);
+  let cursor = 0;
+  for (const part of allParts) {
+    zip.set(part, cursor);
+    cursor += part.length;
+  }
+  return zip;
+}
+
+function columnName(index: number) {
+  let name = "";
+  let value = index;
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    name = String.fromCharCode(65 + remainder) + name;
+    value = Math.floor((value - 1) / 26);
+  }
+  return name;
+}
+
+function xlsxCell(rowIndex: number, columnIndex: number, value: unknown, style = 0) {
+  const reference = `${columnName(columnIndex)}${rowIndex}`;
+  const text = escapeHtml(value);
+  const styleAttr = style ? ` s="${style}"` : "";
+  if (typeof value === "number") {
+    return `<c r="${reference}"${styleAttr}><v>${value}</v></c>`;
+  }
+  return `<c r="${reference}" t="inlineStr"${styleAttr}><is><t>${text}</t></is></c>`;
+}
+
+function xlsxRow(rowIndex: number, values: unknown[], style = 0) {
+  return `<row r="${rowIndex}">${values
+    .map((value, index) => xlsxCell(rowIndex, index + 1, value, style))
+    .join("")}</row>`;
+}
+
+function xlsxMergedRow(rowIndex: number, text: string, style: number) {
+  return {
+    row: `<row r="${rowIndex}">${xlsxCell(rowIndex, 1, text, style)}</row>`,
+    merge: `<mergeCell ref="A${rowIndex}:M${rowIndex}"/>`
+  };
+}
+
+export function entriesToXlsxBlob(entries: Entry[], rangeLabel: string) {
+  const sorted = [...entries].sort((a, b) => {
+    const dateCompare = a.date.localeCompare(b.date);
+    if (dateCompare !== 0) return dateCompare;
+    return a.time.localeCompare(b.time);
+  });
+
+  const rows: string[] = [];
+  const merges: string[] = [];
+  const totalMinutes = sorted.reduce((sum, entry) => sum + (entry.duration ?? 0), 0);
+  const headers = [
+    "#",
+    "Year",
+    "Month",
+    "Day",
+    "Date",
+    "Time",
+    "Type",
+    "Status",
+    "Priority",
+    "Duration Min",
+    "Tag",
+    "Work",
+    "Notes"
+  ];
+  let rowIndex = 1;
+  const title = xlsxMergedRow(rowIndex, "Office Work Tracker Export", 1);
+  rows.push(title.row);
+  merges.push(title.merge);
+  rowIndex += 1;
+
+  [
+    ["Export Range", rangeLabel],
+    ["Generated At", format(new Date(), "yyyy-MM-dd HH:mm")],
+    ["Total Entries", sorted.length],
+    ["Done", sorted.filter((entry) => entry.status === "done").length],
+    ["In Progress", sorted.filter((entry) => entry.status === "in_progress").length],
+    ["Pending", sorted.filter((entry) => entry.status === "pending").length],
+    ["Total Minutes", totalMinutes]
+  ].forEach(([label, value]) => {
+    rows.push(xlsxRow(rowIndex, [label, value], 2));
+    rowIndex += 1;
+  });
+
+  rowIndex += 1;
+  rows.push(xlsxRow(rowIndex, headers, 3));
+  rowIndex += 1;
+
+  let currentYear = "";
+  let currentMonth = "";
+  let currentDay = "";
+
+  sorted.forEach((entry, index) => {
+    const date = parseISO(entry.date);
+    const year = format(date, "yyyy");
+    const month = format(date, "MMMM yyyy");
+    const day = format(date, "EEEE, d MMMM yyyy");
+
+    if (year !== currentYear) {
+      currentYear = year;
+      currentMonth = "";
+      currentDay = "";
+      const group = xlsxMergedRow(rowIndex, `Year: ${year}`, 4);
+      rows.push(group.row);
+      merges.push(group.merge);
+      rowIndex += 1;
+    }
+
+    if (month !== currentMonth) {
+      currentMonth = month;
+      currentDay = "";
+      const group = xlsxMergedRow(rowIndex, `Month: ${month}`, 5);
+      rows.push(group.row);
+      merges.push(group.merge);
+      rowIndex += 1;
+    }
+
+    if (day !== currentDay) {
+      currentDay = day;
+      const group = xlsxMergedRow(rowIndex, `Day: ${day}`, 6);
+      rows.push(group.row);
+      merges.push(group.merge);
+      rowIndex += 1;
+    }
+
+    rows.push(
+      xlsxRow(rowIndex, [
+        index + 1,
+        year,
+        format(date, "MMMM"),
+        format(date, "EEEE"),
+        entry.date,
+        entry.time,
+        typeLabel(entry.type),
+        statusLabel(entry.status),
+        priorityLabel(entry.priority),
+        entry.duration ?? "",
+        entry.tag ?? "",
+        entry.text,
+        entry.notes ?? ""
+      ])
+    );
+    rowIndex += 1;
+  });
+
+  const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <cols>
+    <col min="1" max="1" width="6" customWidth="1"/>
+    <col min="2" max="4" width="16" customWidth="1"/>
+    <col min="5" max="10" width="14" customWidth="1"/>
+    <col min="11" max="11" width="22" customWidth="1"/>
+    <col min="12" max="12" width="60" customWidth="1"/>
+    <col min="13" max="13" width="48" customWidth="1"/>
+  </cols>
+  <sheetData>${rows.join("")}</sheetData>
+  <mergeCells count="${merges.length}">${merges.join("")}</mergeCells>
+</worksheet>`;
+
+  const files = [
+    {
+      name: "[Content_Types].xml",
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`
+    },
+    {
+      name: "_rels/.rels",
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`
+    },
+    {
+      name: "xl/workbook.xml",
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Worklog" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`
+    },
+    {
+      name: "xl/_rels/workbook.xml.rels",
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`
+    },
+    {
+      name: "xl/styles.xml",
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="4">
+    <font><sz val="11"/><name val="Calibri"/></font>
+    <font><b/><sz val="16"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
+    <font><b/><sz val="11"/><name val="Calibri"/></font>
+    <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
+  </fonts>
+  <fills count="7">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF111827"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF1F2937"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF2563EB"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFFEF3C7"/><bgColor indexed="64"/></patternFill></fill>
+  </fills>
+  <borders count="2">
+    <border><left/><right/><top/><bottom/><diagonal/></border>
+    <border><left style="thin"/><right style="thin"/><top style="thin"/><bottom style="thin"/><diagonal/></border>
+  </borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="7">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>
+    <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
+    <xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
+    <xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
+    <xf numFmtId="0" fontId="3" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
+    <xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
+    <xf numFmtId="0" fontId="2" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
+  </cellXfs>
+  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      content: worksheet
+    }
+  ];
+
+  return new Blob([createZip(files)], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  });
 }
 
 export function initials(name?: string | null, email?: string | null) {

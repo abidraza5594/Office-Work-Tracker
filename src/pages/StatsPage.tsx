@@ -14,8 +14,9 @@ import { useStats } from "@/hooks/useStats";
 import {
   downloadFile,
   entriesToCsv,
-  entriesToExcel,
+  entriesToXlsxBlob,
   filterEntriesByDateRange,
+  downloadBlob,
   todayKey,
   typeLabel
 } from "@/lib/utils";
@@ -87,11 +88,7 @@ export function StatsPage() {
   };
 
   const exportExcel = () => {
-    downloadFile(
-      `worklog-${fileSuffix}.xls`,
-      entriesToExcel(exportEntries, rangeLabel),
-      "application/vnd.ms-excel;charset=utf-8"
-    );
+    downloadBlob(`worklog-${fileSuffix}.xlsx`, entriesToXlsxBlob(exportEntries, rangeLabel));
   };
 
   const copyToday = async () => {
