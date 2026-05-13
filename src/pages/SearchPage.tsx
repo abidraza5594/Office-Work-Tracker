@@ -57,7 +57,7 @@ export function SearchPage() {
 
   useEffect(() => {
     if (!user?.uid) return;
-    if (entries.length === 0) void entriesApi.loadAll().catch(() => undefined);
+    void entriesApi.loadAll().catch(() => undefined);
   }, [user?.uid]);
 
   useEffect(() => {

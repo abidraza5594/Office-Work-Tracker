@@ -36,6 +36,7 @@ export function HistoryPage() {
   const entries = useAppStore((state) => state.historyEntries);
   const isLoading = useAppStore((state) => state.isLoading);
   const error = useAppStore((state) => state.error);
+  const setHistoryEntries = useAppStore((state) => state.setHistoryEntries);
   const entriesApi = useEntries();
   const [from, setFrom] = useState(sevenDaysAgo);
   const [to, setTo] = useState(today);
@@ -101,6 +102,15 @@ export function HistoryPage() {
     setActiveDay("all");
     setVisibleCount(20);
     await load(startKey, today);
+  };
+
+  const loadAllTime = async () => {
+    setFrom("");
+    setTo(today);
+    setActiveDay("all");
+    setVisibleCount(20);
+    const allEntries = await entriesApi.loadAll();
+    setHistoryEntries(allEntries);
   };
 
   const openEdit = (entry: Entry) => {
@@ -172,6 +182,9 @@ export function HistoryPage() {
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={() => quickRange("month")}>
             This Month
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={loadAllTime}>
+            All Time
           </Button>
         </div>
       </section>
